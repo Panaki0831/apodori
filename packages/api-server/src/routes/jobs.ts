@@ -1,15 +1,19 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
-import type {
-  ApiResponse,
-  CsvRow,
-  JobStatus,
-} from "@sales-ai/core";
+import { loadConfig } from "@sales-ai/core";
+import type { ApiResponse, CsvRow, JobStatus } from "@sales-ai/core";
+import { JobManager } from "@sales-ai/worker";
 import { parseCSV } from "../csv-parser.js";
 
 // ============================================================
-// In-memory storage (MVP)
-// TODO: Replace with Prisma database integration
+// Initialize JobManager (connects to Redis / BullMQ)
+// ============================================================
+
+const config = loadConfig();
+const jobManager = new JobManager(config.redis.url);
+
+// ============================================================
+// In-memory job metadata store (MVP)
 // ============================================================
 
 interface StoredJob {
@@ -33,7 +37,7 @@ interface StoredJob {
 const jobStore = new Map<string, StoredJob>();
 
 // ============================================================
-// Helper: create a job from a list of company inputs
+// Helper: create a job and enqueue to BullMQ
 // ============================================================
 
 interface CompanyInput {
@@ -42,7 +46,9 @@ interface CompanyInput {
   industry?: string;
 }
 
-function createJobFromCompanies(companies: CompanyInput[]): StoredJob {
+async function createJobFromCompanies(
+  companies: CompanyInput[],
+): Promise<StoredJob> {
   const jobId = randomUUID();
   const companyRecords = companies.map((c) => ({
     id: randomUUID(),
@@ -53,41 +59,74 @@ function createJobFromCompanies(companies: CompanyInput[]): StoredJob {
 
   const job: StoredJob = {
     id: jobId,
-    status: "pending",
+    status: "running",
     totalCount: companyRecords.length,
     doneCount: 0,
     failedCount: 0,
     companies: companyRecords,
     createdAt: new Date(),
+    startedAt: new Date(),
   };
 
   jobStore.set(jobId, job);
 
-  // TODO: Queue collection tasks via JobManager from @sales-ai/worker
-  // Example:
-  //   const jobManager = new JobManager(redisConnection);
-  //   for (const company of companyRecords) {
-  //     await jobManager.enqueue({ jobId, companyId: company.id, companyName: company.company_name });
-  //   }
-  //
-  // For now, we just mark the job as pending.
-  // The worker package will pick up these tasks once integrated.
+  // Enqueue collection tasks to BullMQ
+  await jobManager.addCollectionJob(
+    companyRecords.map((c) => ({
+      id: c.id,
+      name: c.company_name,
+      url: c.company_url,
+      industry: c.industry,
+    })),
+    jobId,
+  );
 
   return job;
 }
 
 /**
  * Convert a StoredJob to the flat shape expected by the frontend Job type.
+ * Fetches real-time progress from BullMQ.
  */
-function toFrontendJob(job: StoredJob) {
+async function toFrontendJob(job: StoredJob) {
+  // Get real-time progress from BullMQ
+  let doneCount = job.doneCount;
+  let failedCount = job.failedCount;
+  let status = job.status;
+
+  try {
+    const progress = await jobManager.getJobProgress(job.id);
+    doneCount = progress.completed;
+    failedCount = progress.failed;
+
+    // Update status based on progress
+    if (doneCount + failedCount >= job.totalCount && job.totalCount > 0) {
+      status = failedCount === job.totalCount ? "failed" : "completed";
+      job.completedAt = job.completedAt ?? new Date();
+    } else if (doneCount + failedCount > 0) {
+      status = "running";
+    }
+
+    // Persist progress back to in-memory store
+    job.doneCount = doneCount;
+    job.failedCount = failedCount;
+    job.status = status;
+  } catch {
+    // If BullMQ query fails, use stored values
+  }
+
   return {
     id: job.id,
-    status: job.status,
+    status,
     totalCompanies: job.totalCount,
-    completedCompanies: job.doneCount,
-    failedCompanies: job.failedCount,
+    completedCompanies: doneCount,
+    failedCompanies: failedCount,
     createdAt: job.createdAt.toISOString(),
-    updatedAt: (job.completedAt ?? job.startedAt ?? job.createdAt).toISOString(),
+    updatedAt: (
+      job.completedAt ??
+      job.startedAt ??
+      job.createdAt
+    ).toISOString(),
     companies: job.companies.map((c) => ({
       id: c.id,
       name: c.company_name,
@@ -107,14 +146,16 @@ const jobs = new Hono();
 
 /**
  * POST /api/jobs - Create a new collection job from a JSON body
- *
- * Body: { companies: Array<{ company_name: string, company_url?: string, industry?: string }> }
  */
 jobs.post("/api/jobs", async (c) => {
   try {
     const body = await c.req.json<{ companies?: CompanyInput[] }>();
 
-    if (!body.companies || !Array.isArray(body.companies) || body.companies.length === 0) {
+    if (
+      !body.companies ||
+      !Array.isArray(body.companies) ||
+      body.companies.length === 0
+    ) {
       const errorResp: ApiResponse<never> = {
         success: false,
         error: "Request body must include a non-empty 'companies' array.",
@@ -122,20 +163,24 @@ jobs.post("/api/jobs", async (c) => {
       return c.json(errorResp, 400);
     }
 
-    // Validate that each company has at least a name
     for (const company of body.companies) {
       if (!company.company_name || typeof company.company_name !== "string") {
         const errorResp: ApiResponse<never> = {
           success: false,
-          error: "Each company must have a non-empty 'company_name' string.",
+          error:
+            "Each company must have a non-empty 'company_name' string.",
         };
         return c.json(errorResp, 400);
       }
     }
 
-    const job = createJobFromCompanies(body.companies);
+    const job = await createJobFromCompanies(body.companies);
 
-    const resp: ApiResponse<{ jobId: string; totalCount: number; status: JobStatus }> = {
+    const resp: ApiResponse<{
+      jobId: string;
+      totalCount: number;
+      status: JobStatus;
+    }> = {
       success: true,
       data: {
         jobId: job.id,
@@ -148,7 +193,8 @@ jobs.post("/api/jobs", async (c) => {
   } catch (err) {
     const errorResp: ApiResponse<never> = {
       success: false,
-      error: err instanceof Error ? err.message : "Unknown error creating job",
+      error:
+        err instanceof Error ? err.message : "Unknown error creating job",
     };
     return c.json(errorResp, 500);
   }
@@ -156,8 +202,6 @@ jobs.post("/api/jobs", async (c) => {
 
 /**
  * POST /api/jobs/csv - Create a job from a CSV file upload
- *
- * Accepts multipart form data with a "file" field containing the CSV.
  */
 jobs.post("/api/jobs/csv", async (c) => {
   try {
@@ -172,11 +216,8 @@ jobs.post("/api/jobs/csv", async (c) => {
       return c.json(errorResp, 400);
     }
 
-    // Read file into a Buffer
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-
-    // Parse CSV (handles encoding detection, validation, deduplication)
     const parsedRows: CsvRow[] = await parseCSV(buffer);
 
     if (parsedRows.length === 0) {
@@ -187,14 +228,13 @@ jobs.post("/api/jobs/csv", async (c) => {
       return c.json(errorResp, 400);
     }
 
-    // Convert CsvRow[] to CompanyInput[]
     const companies: CompanyInput[] = parsedRows.map((row) => ({
       company_name: row.company_name,
       company_url: row.company_url || undefined,
       industry: row.industry || undefined,
     }));
 
-    const job = createJobFromCompanies(companies);
+    const job = await createJobFromCompanies(companies);
 
     const resp: ApiResponse<{
       jobId: string;
@@ -215,7 +255,10 @@ jobs.post("/api/jobs/csv", async (c) => {
   } catch (err) {
     const errorResp: ApiResponse<never> = {
       success: false,
-      error: err instanceof Error ? err.message : "Unknown error processing CSV",
+      error:
+        err instanceof Error
+          ? err.message
+          : "Unknown error processing CSV",
     };
     return c.json(errorResp, 500);
   }
@@ -224,7 +267,7 @@ jobs.post("/api/jobs/csv", async (c) => {
 /**
  * GET /api/jobs/:jobId - Get job status and progress
  */
-jobs.get("/api/jobs/:jobId", (c) => {
+jobs.get("/api/jobs/:jobId", async (c) => {
   const jobId = c.req.param("jobId");
   const job = jobStore.get(jobId);
 
@@ -236,12 +279,9 @@ jobs.get("/api/jobs/:jobId", (c) => {
     return c.json(errorResp, 404);
   }
 
-  // TODO: Fetch real-time progress from JobManager / BullMQ
-  // const progress = await jobManager.getJobProgress(jobId);
-
-  const resp: ApiResponse<ReturnType<typeof toFrontendJob>> = {
+  const resp: ApiResponse<Awaited<ReturnType<typeof toFrontendJob>>> = {
     success: true,
-    data: toFrontendJob(job),
+    data: await toFrontendJob(job),
   };
 
   return c.json(resp);
@@ -250,14 +290,16 @@ jobs.get("/api/jobs/:jobId", (c) => {
 /**
  * GET /api/jobs - List all jobs
  */
-jobs.get("/api/jobs", (c) => {
-  const allJobs = Array.from(jobStore.values())
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-    .map(toFrontendJob);
+jobs.get("/api/jobs", async (c) => {
+  const allJobs = Array.from(jobStore.values()).sort(
+    (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+  );
 
-  const resp: ApiResponse<ReturnType<typeof toFrontendJob>[]> = {
+  const frontendJobs = await Promise.all(allJobs.map(toFrontendJob));
+
+  const resp: ApiResponse<Awaited<ReturnType<typeof toFrontendJob>>[]> = {
     success: true,
-    data: allJobs,
+    data: frontendJobs,
   };
 
   return c.json(resp);

@@ -21,6 +21,8 @@ export type { CollectionJobData } from "./collection-worker.js";
 export { JobManager } from "./job-manager.js";
 export type { CompanyInput, JobProgress } from "./job-manager.js";
 
+export { ResultStore } from "./result-store.js";
+
 // ---------------------------------------------------------------------------
 // Main entry point -- only runs when this file is executed directly
 // ---------------------------------------------------------------------------

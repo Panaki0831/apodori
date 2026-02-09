@@ -1,106 +1,70 @@
 import { Hono } from "hono";
-import { randomUUID } from "node:crypto";
+import { loadConfig } from "@sales-ai/core";
 import type {
   ApiResponse,
   CompanyInfo,
   CompanyDetailInfo,
   ContactInfo,
 } from "@sales-ai/core";
+import { ResultStore } from "@sales-ai/worker";
 
 // ============================================================
-// In-memory storage (MVP)
-// TODO: Replace with Prisma database integration
+// Redis result store (reads results written by the worker)
 // ============================================================
 
-interface StoredCompany {
-  id: string;
-  info: CompanyInfo;
-  detail: CompanyDetailInfo;
-  contacts: ContactInfo[];
-  jobId?: string;
-  createdAt: Date;
+const config = loadConfig();
+const resultStore = new ResultStore(config.redis.url);
+
+// ============================================================
+// Helper: convert a raw Redis result to the frontend Company shape
+// ============================================================
+
+interface RedisCompanyResult {
+  companyInfo?: CompanyInfo;
+  contacts?: ContactInfo[];
+  details?: CompanyDetailInfo;
+  _companyId?: string;
+  _jobId?: string;
+  _savedAt?: string;
 }
 
-/** In-memory company store keyed by company ID */
-const companyStore = new Map<string, StoredCompany>();
+function toFrontendCompany(raw: RedisCompanyResult) {
+  const info = raw.companyInfo ?? ({} as CompanyInfo);
+  const detail = raw.details ?? ({} as CompanyDetailInfo);
+  const contacts = raw.contacts ?? [];
+  const id = raw._companyId ?? "unknown";
 
-// Seed some mock data so the API is demonstrable
-function seedMockData(): void {
-  if (companyStore.size > 0) return;
-
-  const mockCompanies: StoredCompany[] = [
-    {
-      id: randomUUID(),
-      info: {
-        name: "Example Corp",
-        url: "https://example.com",
-        industry: "IT",
-        employeeCount: 500,
-        address: "Tokyo, Japan",
-        representative: "Taro Yamada",
-        businessDescription: "Enterprise SaaS solutions",
-      },
-      detail: {
-        revenue: "10B JPY",
-        growthRate: "15%",
-        contactFormUrl: "https://example.com/contact",
-      },
-      contacts: [
-        {
-          personName: "Hanako Suzuki",
-          email: "h.suzuki@example.com",
-          emailConfidence: 0.9,
-          emailSource: "hp",
-          jobTitle: "CTO",
-          department: "Engineering",
-        },
-        {
-          personName: "Jiro Tanaka",
-          email: "j.tanaka@example.com",
-          emailConfidence: 0.8,
-          emailSource: "pattern",
-          jobTitle: "VP Sales",
-          department: "Sales",
-        },
-      ],
-      createdAt: new Date(),
-    },
-    {
-      id: randomUUID(),
-      info: {
-        name: "Sample Inc",
-        url: "https://sample.co.jp",
-        industry: "Manufacturing",
-        employeeCount: 1200,
-        address: "Osaka, Japan",
-        representative: "Ichiro Sato",
-        businessDescription: "Precision manufacturing components",
-      },
-      detail: {
-        revenue: "50B JPY",
-        growthRate: "8%",
-      },
-      contacts: [
-        {
-          personName: "Yuki Watanabe",
-          email: "y.watanabe@sample.co.jp",
-          emailConfidence: 0.95,
-          emailSource: "hp",
-          jobTitle: "Head of Purchasing",
-          department: "Procurement",
-        },
-      ],
-      createdAt: new Date(),
-    },
-  ];
-
-  for (const company of mockCompanies) {
-    companyStore.set(company.id, company);
-  }
+  return {
+    id,
+    name: info.name ?? "Unknown",
+    url: info.url,
+    address: info.address,
+    phone: info.phone,
+    industry: info.industry,
+    employeeCount: info.employeeCount,
+    description: info.businessDescription,
+    contacts: contacts.map((ct: ContactInfo, i: number) => ({
+      id: `${id}-ct-${i}`,
+      name: ct.personName,
+      email: ct.email ?? "",
+      confidence: ct.emailConfidence ?? 0,
+      title: ct.jobTitle,
+      department: ct.department,
+      source: ct.emailSource,
+    })),
+    news: detail.recentNews?.map((n) => ({
+      title: n.title,
+      url: n.url,
+      date: n.date ?? "",
+      summary: n.summary,
+    })),
+    competitors: detail.competitors?.map((comp) => ({
+      name: comp.name,
+      url: comp.url,
+      description: comp.differentiator,
+    })),
+  };
 }
-
-// Initialize mock data
-seedMockData();
 
 // ============================================================
 // Routes
@@ -109,78 +73,39 @@ seedMockData();
 const companies = new Hono();
 
 /**
- * Convert a StoredCompany to the flat shape expected by the frontend.
+ * GET /api/companies - List collected companies from Redis
  */
-function toFrontendCompany(company: StoredCompany) {
-  return {
-    id: company.id,
-    name: company.info.name,
-    url: company.info.url,
-    address: company.info.address,
-    phone: company.info.phone,
-    industry: company.info.industry,
-    employeeCount: company.info.employeeCount,
-    description: company.info.businessDescription,
-    contacts: company.contacts.map((ct, i) => ({
-      id: `${company.id}-ct-${i}`,
-      name: ct.personName,
-      email: ct.email ?? "",
-      confidence: ct.emailConfidence ?? 0,
-      title: ct.jobTitle,
-      department: ct.department,
-      source: ct.emailSource,
-    })),
-    news: company.detail.recentNews?.map((n) => ({
-      title: n.title,
-      url: n.url,
-      date: n.date ?? "",
-      summary: n.summary,
-    })),
-    competitors: company.detail.competitors?.map((comp) => ({
-      name: comp.name,
-      url: comp.url,
-      description: comp.differentiator,
-    })),
-  };
-}
-
-/**
- * GET /api/companies - List companies (searchable)
- *
- * Query params:
- *   search - Filter by company name (partial match)
- */
-companies.get("/api/companies", (c) => {
+companies.get("/api/companies", async (c) => {
   const search = c.req.query("search")?.toLowerCase();
 
-  // TODO: Replace with Prisma query
-  let allCompanies = Array.from(companyStore.values()).sort(
-    (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+  const allResults = await resultStore.getAllCompanyResults();
+
+  let companyList = allResults.map((r) =>
+    toFrontendCompany(r as unknown as RedisCompanyResult),
   );
 
-  // Apply search filter
   if (search) {
-    allCompanies = allCompanies.filter((company) =>
-      company.info.name.toLowerCase().includes(search),
+    companyList = companyList.filter((company) =>
+      company.name.toLowerCase().includes(search),
     );
   }
 
-  const resp: ApiResponse<ReturnType<typeof toFrontendCompany>[]> = {
+  const resp: ApiResponse<typeof companyList> = {
     success: true,
-    data: allCompanies.map(toFrontendCompany),
+    data: companyList,
   };
 
   return c.json(resp);
 });
 
 /**
- * GET /api/companies/:id - Get company details
+ * GET /api/companies/:id - Get company details from Redis
  */
-companies.get("/api/companies/:id", (c) => {
+companies.get("/api/companies/:id", async (c) => {
   const id = c.req.param("id");
-  const company = companyStore.get(id);
+  const raw = await resultStore.getCompanyResult(id);
 
-  if (!company) {
+  if (!raw) {
     const errorResp: ApiResponse<never> = {
       success: false,
       error: `Company not found: ${id}`,
@@ -188,10 +113,11 @@ companies.get("/api/companies/:id", (c) => {
     return c.json(errorResp, 404);
   }
 
-  // TODO: Fetch from Prisma with relations
-  const resp: ApiResponse<ReturnType<typeof toFrontendCompany>> = {
+  const company = toFrontendCompany(raw as unknown as RedisCompanyResult);
+
+  const resp: ApiResponse<typeof company> = {
     success: true,
-    data: toFrontendCompany(company),
+    data: company,
   };
 
   return c.json(resp);
@@ -200,11 +126,11 @@ companies.get("/api/companies/:id", (c) => {
 /**
  * GET /api/companies/:id/contacts - Get contacts for a specific company
  */
-companies.get("/api/companies/:id/contacts", (c) => {
+companies.get("/api/companies/:id/contacts", async (c) => {
   const id = c.req.param("id");
-  const company = companyStore.get(id);
+  const raw = await resultStore.getCompanyResult(id);
 
-  if (!company) {
+  if (!raw) {
     const errorResp: ApiResponse<never> = {
       success: false,
       error: `Company not found: ${id}`,
@@ -212,9 +138,12 @@ companies.get("/api/companies/:id/contacts", (c) => {
     return c.json(errorResp, 404);
   }
 
+  const result = raw as unknown as RedisCompanyResult;
+  const contacts = result.contacts ?? [];
+
   const resp: ApiResponse<ContactInfo[]> = {
     success: true,
-    data: company.contacts,
+    data: contacts,
   };
 
   return c.json(resp);
@@ -222,38 +151,33 @@ companies.get("/api/companies/:id/contacts", (c) => {
 
 /**
  * GET /api/export - Export results as CSV or JSON
- *
- * Query params:
- *   jobId  - Filter by job ID (optional)
- *   format - "csv" or "json" (default: "json")
  */
-companies.get("/api/export", (c) => {
-  const jobId = c.req.query("jobId");
+companies.get("/api/export", async (c) => {
   const format = c.req.query("format") || "json";
 
-  // TODO: Fetch from Prisma, optionally filtered by jobId
-  let exportCompanies = Array.from(companyStore.values());
+  const allResults = await resultStore.getAllCompanyResults();
+  const exportCompanies = allResults.map(
+    (r) => r as unknown as RedisCompanyResult,
+  );
 
-  if (jobId) {
-    exportCompanies = exportCompanies.filter((company) => company.jobId === jobId);
-  }
+  const exportRows = exportCompanies.flatMap((result) => {
+    const info = result.companyInfo ?? ({} as CompanyInfo);
+    const detail = result.details ?? ({} as CompanyDetailInfo);
+    const contacts = result.contacts ?? [];
 
-  // Build flat export records (one row per contact, with company info repeated)
-  const exportRows = exportCompanies.flatMap((company) => {
-    if (company.contacts.length === 0) {
-      // Include company with no contacts as a single row
+    if (contacts.length === 0) {
       return [
         {
-          company_name: company.info.name,
-          company_url: company.info.url || "",
-          industry: company.info.industry || "",
-          employee_count: company.info.employeeCount ?? "",
-          address: company.info.address || "",
-          representative: company.info.representative || "",
-          business_description: company.info.businessDescription || "",
-          revenue: company.detail.revenue || "",
-          growth_rate: company.detail.growthRate || "",
-          contact_form_url: company.detail.contactFormUrl || "",
+          company_name: info.name ?? "",
+          company_url: info.url || "",
+          industry: info.industry || "",
+          employee_count: info.employeeCount ?? "",
+          address: info.address || "",
+          representative: info.representative || "",
+          business_description: info.businessDescription || "",
+          revenue: detail.revenue || "",
+          growth_rate: detail.growthRate || "",
+          contact_form_url: detail.contactFormUrl || "",
           contact_name: "",
           contact_email: "",
           contact_title: "",
@@ -264,17 +188,17 @@ companies.get("/api/export", (c) => {
       ];
     }
 
-    return company.contacts.map((contact) => ({
-      company_name: company.info.name,
-      company_url: company.info.url || "",
-      industry: company.info.industry || "",
-      employee_count: company.info.employeeCount ?? "",
-      address: company.info.address || "",
-      representative: company.info.representative || "",
-      business_description: company.info.businessDescription || "",
-      revenue: company.detail.revenue || "",
-      growth_rate: company.detail.growthRate || "",
-      contact_form_url: company.detail.contactFormUrl || "",
+    return contacts.map((contact: ContactInfo) => ({
+      company_name: info.name ?? "",
+      company_url: info.url || "",
+      industry: info.industry || "",
+      employee_count: info.employeeCount ?? "",
+      address: info.address || "",
+      representative: info.representative || "",
+      business_description: info.businessDescription || "",
+      revenue: detail.revenue || "",
+      growth_rate: detail.growthRate || "",
+      contact_form_url: detail.contactFormUrl || "",
       contact_name: contact.personName,
       contact_email: contact.email || "",
       contact_title: contact.jobTitle || "",
@@ -285,7 +209,6 @@ companies.get("/api/export", (c) => {
   });
 
   if (format === "csv") {
-    // Generate CSV string
     if (exportRows.length === 0) {
       return c.text("", 200);
     }
@@ -297,8 +220,11 @@ companies.get("/api/export", (c) => {
         headers
           .map((h) => {
             const value = String(row[h as keyof typeof row]);
-            // Escape values that contain commas, quotes, or newlines
-            if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+            if (
+              value.includes(",") ||
+              value.includes('"') ||
+              value.includes("\n")
+            ) {
               return `"${value.replace(/"/g, '""')}"`;
             }
             return value;
@@ -312,7 +238,6 @@ companies.get("/api/export", (c) => {
     return c.text(csvLines.join("\n"));
   }
 
-  // Default: JSON export
   const resp: ApiResponse<typeof exportRows> = {
     success: true,
     data: exportRows,

@@ -4,6 +4,7 @@ import { LlmClient } from "@sales-ai/ai-engine";
 import { CollectionPipeline } from "@sales-ai/data-collector";
 
 import { COLLECTION_QUEUE, createWorkerConnection } from "./queues.js";
+import { ResultStore } from "./result-store.js";
 
 // ---------------------------------------------------------------------------
 // Job payload
@@ -33,6 +34,7 @@ export interface CollectionJobData {
 export function createCollectionWorker(redisUrl: string): Worker {
   const connection = createWorkerConnection(redisUrl);
   const config = loadConfig();
+  const resultStore = new ResultStore(redisUrl);
 
   const worker = new Worker<CollectionJobData>(
     COLLECTION_QUEUE,
@@ -60,8 +62,15 @@ export function createCollectionWorker(redisUrl: string): Worker {
           industry,
         );
 
+        // Store the result in Redis so the API server can read it.
+        await resultStore.saveCompanyResult(
+          companyId,
+          jobId,
+          result as unknown as Record<string, unknown>,
+        );
+
         console.log(
-          `[collection-worker] Completed job ${job.id} | jobId=${jobId} | company="${companyName}"`,
+          `[collection-worker] Completed job ${job.id} | jobId=${jobId} | company="${companyName}" — result saved to Redis`,
         );
 
         return result;
