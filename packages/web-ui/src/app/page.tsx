@@ -13,11 +13,19 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       const [jobsRes, companiesRes] = await Promise.all([
-        fetchApi<Job[]>("/api/jobs"),
-        fetchApi<Company[]>("/api/companies"),
+        fetchApi<any>("/api/jobs"),
+        fetchApi<any>("/api/companies"),
       ]);
-      if (jobsRes.ok) setJobs(jobsRes.data);
-      if (companiesRes.ok) setCompanies(companiesRes.data);
+      if (jobsRes.ok) {
+        const raw = jobsRes.data;
+        setJobs(Array.isArray(raw) ? raw : []);
+      }
+      if (companiesRes.ok) {
+        const raw = companiesRes.data;
+        // Handle both flat array and paginated { companies: [...] } shapes
+        const list = Array.isArray(raw) ? raw : Array.isArray(raw?.companies) ? raw.companies : [];
+        setCompanies(list);
+      }
       setLoading(false);
     }
     load();

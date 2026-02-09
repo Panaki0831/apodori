@@ -14,8 +14,12 @@ export default function CompaniesPage() {
 
   useEffect(() => {
     async function load() {
-      const res = await fetchApi<Company[]>("/api/companies");
-      if (res.ok) setCompanies(res.data);
+      const res = await fetchApi<any>("/api/companies");
+      if (res.ok) {
+        const raw = res.data;
+        const list = Array.isArray(raw) ? raw : Array.isArray(raw?.companies) ? raw.companies : [];
+        setCompanies(list);
+      }
       setLoading(false);
     }
     load();
