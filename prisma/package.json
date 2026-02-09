@@ -5,10 +5,10 @@
   "main": "./generated/client/index.js",
   "types": "./generated/client/index.d.ts",
   "scripts": {
-    "generate": "npx prisma generate",
-    "push": "npx prisma db push",
-    "migrate": "npx prisma migrate dev",
-    "build": "npx prisma generate",
+    "generate": "npx dotenv -e ../.env -- prisma generate",
+    "push": "npx dotenv -e ../.env -- prisma db push",
+    "migrate": "npx dotenv -e ../.env -- prisma migrate dev",
+    "build": "npx dotenv -e ../.env -- prisma generate",
     "clean": "rm -rf generated",
     "lint": "echo 'lint ok'"
   },
@@ -16,6 +16,7 @@
     "@prisma/client": "^6.2.0"
   },
   "devDependencies": {
+    "dotenv-cli": "^8.0.0",
     "prisma": "^6.2.0"
   }
 }
