@@ -59,8 +59,15 @@ export default function CompanyDetailPage() {
 
   if (error || !company) {
     return (
-      <div className="alert alert-error">
-        {error ?? "企業が見つかりません"}
+      <div>
+        <div className="alert alert-error">
+          {error ?? "企業が見つかりません"}
+        </div>
+        <div className="mt-4">
+          <Link href="/companies" className="btn btn-secondary">
+            企業一覧に戻る
+          </Link>
+        </div>
       </div>
     );
   }

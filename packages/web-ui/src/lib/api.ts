@@ -25,11 +25,19 @@ export async function fetchApi<T>(
 
     if (!res.ok) {
       const body = await res.text();
+      // Try to parse as JSON to extract a clean error message
+      let errorMsg = body || res.statusText;
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed?.error) errorMsg = parsed.error;
+      } catch {
+        // Not JSON, use raw text
+      }
       return {
         data: null as unknown as T,
         ok: false,
         status: res.status,
-        error: body || res.statusText,
+        error: errorMsg,
       };
     }
 
