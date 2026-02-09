@@ -5,10 +5,10 @@
   "main": "./generated/client/index.js",
   "types": "./generated/client/index.d.ts",
   "scripts": {
-    "generate": "prisma generate",
-    "push": "prisma db push",
-    "migrate": "prisma migrate dev",
-    "build": "prisma generate",
+    "generate": "npx prisma generate",
+    "push": "npx prisma db push",
+    "migrate": "npx prisma migrate dev",
+    "build": "npx prisma generate",
     "clean": "rm -rf generated",
     "lint": "echo 'lint ok'"
   },
