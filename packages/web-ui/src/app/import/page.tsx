@@ -95,9 +95,14 @@ export default function ImportPage() {
     setSubmitting(true);
     setResult(null);
 
-    const res = await fetchApi<{ jobId: string }>("/api/jobs/csv", {
+    const res = await fetchApi<{ jobId: string }>("/api/jobs", {
       method: "POST",
-      body: JSON.stringify({ companies: parsed }),
+      body: JSON.stringify({
+        companies: parsed.map((c) => ({
+          company_name: c.name,
+          company_url: c.url,
+        })),
+      }),
     });
 
     setSubmitting(false);

@@ -109,16 +109,48 @@ seedMockData();
 const companies = new Hono();
 
 /**
- * GET /api/companies - List companies (paginated, searchable)
+ * Convert a StoredCompany to the flat shape expected by the frontend.
+ */
+function toFrontendCompany(company: StoredCompany) {
+  return {
+    id: company.id,
+    name: company.info.name,
+    url: company.info.url,
+    address: company.info.address,
+    phone: company.info.phone,
+    industry: company.info.industry,
+    employeeCount: company.info.employeeCount,
+    description: company.info.businessDescription,
+    contacts: company.contacts.map((ct, i) => ({
+      id: `${company.id}-ct-${i}`,
+      name: ct.personName,
+      email: ct.email ?? "",
+      confidence: ct.emailConfidence ?? 0,
+      title: ct.jobTitle,
+      department: ct.department,
+      source: ct.emailSource,
+    })),
+    news: company.detail.recentNews?.map((n) => ({
+      title: n.title,
+      url: n.url,
+      date: n.date ?? "",
+      summary: n.summary,
+    })),
+    competitors: company.detail.competitors?.map((comp) => ({
+      name: comp.name,
+      url: comp.url,
+      description: comp.differentiator,
+    })),
+  };
+}
+
+/**
+ * GET /api/companies - List companies (searchable)
  *
  * Query params:
- *   page  - Page number (default: 1)
- *   limit - Items per page (default: 20)
  *   search - Filter by company name (partial match)
  */
 companies.get("/api/companies", (c) => {
-  const page = Math.max(1, parseInt(c.req.query("page") || "1", 10));
-  const limit = Math.min(100, Math.max(1, parseInt(c.req.query("limit") || "20", 10)));
   const search = c.req.query("search")?.toLowerCase();
 
   // TODO: Replace with Prisma query
@@ -133,34 +165,9 @@ companies.get("/api/companies", (c) => {
     );
   }
 
-  const totalCount = allCompanies.length;
-  const totalPages = Math.ceil(totalCount / limit);
-  const offset = (page - 1) * limit;
-  const pageItems = allCompanies.slice(offset, offset + limit);
-
-  const resp: ApiResponse<{
-    companies: Array<{ id: string; info: CompanyInfo; contactCount: number }>;
-    pagination: {
-      page: number;
-      limit: number;
-      totalCount: number;
-      totalPages: number;
-    };
-  }> = {
+  const resp: ApiResponse<ReturnType<typeof toFrontendCompany>[]> = {
     success: true,
-    data: {
-      companies: pageItems.map((company) => ({
-        id: company.id,
-        info: company.info,
-        contactCount: company.contacts.length,
-      })),
-      pagination: {
-        page,
-        limit,
-        totalCount,
-        totalPages,
-      },
-    },
+    data: allCompanies.map(toFrontendCompany),
   };
 
   return c.json(resp);
@@ -182,19 +189,9 @@ companies.get("/api/companies/:id", (c) => {
   }
 
   // TODO: Fetch from Prisma with relations
-  const resp: ApiResponse<{
-    id: string;
-    info: CompanyInfo;
-    detail: CompanyDetailInfo;
-    contacts: ContactInfo[];
-  }> = {
+  const resp: ApiResponse<ReturnType<typeof toFrontendCompany>> = {
     success: true,
-    data: {
-      id: company.id,
-      info: company.info,
-      detail: company.detail,
-      contacts: company.contacts,
-    },
+    data: toFrontendCompany(company),
   };
 
   return c.json(resp);

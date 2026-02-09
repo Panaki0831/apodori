@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import type {
   ApiResponse,
-  CollectionJobStatus,
   CsvRow,
   JobStatus,
 } from "@sales-ai/core";
@@ -77,15 +76,26 @@ function createJobFromCompanies(companies: CompanyInput[]): StoredJob {
   return job;
 }
 
-function toJobStatusResponse(job: StoredJob): CollectionJobStatus {
+/**
+ * Convert a StoredJob to the flat shape expected by the frontend Job type.
+ */
+function toFrontendJob(job: StoredJob) {
   return {
     id: job.id,
     status: job.status,
-    totalCount: job.totalCount,
-    doneCount: job.doneCount,
-    failedCount: job.failedCount,
-    startedAt: job.startedAt,
-    completedAt: job.completedAt,
+    totalCompanies: job.totalCount,
+    completedCompanies: job.doneCount,
+    failedCompanies: job.failedCount,
+    createdAt: job.createdAt.toISOString(),
+    updatedAt: (job.completedAt ?? job.startedAt ?? job.createdAt).toISOString(),
+    companies: job.companies.map((c) => ({
+      id: c.id,
+      name: c.company_name,
+      url: c.company_url,
+      tasksCompleted: 0,
+      tasksFailed: 0,
+      tasksTotal: 11,
+    })),
   };
 }
 
@@ -229,9 +239,9 @@ jobs.get("/api/jobs/:jobId", (c) => {
   // TODO: Fetch real-time progress from JobManager / BullMQ
   // const progress = await jobManager.getJobProgress(jobId);
 
-  const resp: ApiResponse<CollectionJobStatus> = {
+  const resp: ApiResponse<ReturnType<typeof toFrontendJob>> = {
     success: true,
-    data: toJobStatusResponse(job),
+    data: toFrontendJob(job),
   };
 
   return c.json(resp);
@@ -243,9 +253,9 @@ jobs.get("/api/jobs/:jobId", (c) => {
 jobs.get("/api/jobs", (c) => {
   const allJobs = Array.from(jobStore.values())
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-    .map(toJobStatusResponse);
+    .map(toFrontendJob);
 
-  const resp: ApiResponse<CollectionJobStatus[]> = {
+  const resp: ApiResponse<ReturnType<typeof toFrontendJob>[]> = {
     success: true,
     data: allJobs,
   };

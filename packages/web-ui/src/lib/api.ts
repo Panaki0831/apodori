@@ -33,8 +33,24 @@ export async function fetchApi<T>(
       };
     }
 
-    const data: T = await res.json();
-    return { data, ok: true, status: res.status };
+    const json = await res.json();
+
+    // The API server wraps responses in { success, data, error }.
+    // Unwrap the envelope so callers receive the inner payload directly.
+    if (json && typeof json === "object" && "success" in json) {
+      if (json.success) {
+        return { data: json.data as T, ok: true, status: res.status };
+      }
+      return {
+        data: null as unknown as T,
+        ok: false,
+        status: res.status,
+        error: json.error ?? "Unknown server error",
+      };
+    }
+
+    // Fallback: response is not in the envelope format
+    return { data: json as T, ok: true, status: res.status };
   } catch (err) {
     return {
       data: null as unknown as T,
