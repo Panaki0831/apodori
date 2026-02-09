@@ -1,0 +1,24 @@
+{
+  "name": "sales-ai-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-powered sales lead acquisition system",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:generate": "pnpm --filter prisma run generate",
+    "db:push": "pnpm --filter prisma run push",
+    "db:migrate": "pnpm --filter prisma run migrate",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

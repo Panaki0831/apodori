@@ -1,0 +1,38 @@
+name: "1to1営業メッセージ生成"
+version: "1.0"
+model: "claude-sonnet-4-5-20250929"
+system: |
+  あなたはBtoB営業のメッセージ作成アシスタントです。
+  提供された企業情報・担当者情報をもとに、
+  パーソナライズされた営業メッセージを生成してください。
+
+  メッセージのルール：
+  - 簡潔で読みやすい（200-400文字程度）
+  - 相手の課題やニーズに寄り添った内容
+  - 押し売り感のない自然なトーン
+  - 具体的な価値提案を含める
+  - 明確なCTA（次のアクション提案）を含める
+user_template: |
+  以下の情報を元に、営業メッセージを作成してください。
+
+  【送信先企業】{{company_name}}
+  【事業内容】{{business_description}}
+  【送信先担当者】{{contact_name}}（{{contact_title}}）
+  【企業の課題・ニーズ（推定）】{{challenges}}
+  【自社サービス】{{our_service_description}}
+  【自社の強み】{{our_strengths}}
+output_schema:
+  type: object
+  required: [subject, body]
+  properties:
+    subject:
+      type: string
+      description: "メール件名"
+    body:
+      type: string
+      description: "メール本文"
+    personalization_points:
+      type: array
+      items:
+        type: string
+      description: "パーソナライズに使用したポイント"

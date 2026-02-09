@@ -1,0 +1,22 @@
+{
+  "name": "@sales-ai/scraper",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "lint": "echo 'lint ok'"
+  },
+  "dependencies": {
+    "@sales-ai/core": "workspace:*",
+    "playwright": "^1.49.0",
+    "cheerio": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}

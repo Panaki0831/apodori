@@ -1,0 +1,256 @@
+import { Hono } from "hono";
+import { randomUUID } from "node:crypto";
+import type {
+  ApiResponse,
+  CollectionJobStatus,
+  CsvRow,
+  JobStatus,
+} from "@sales-ai/core";
+import { parseCSV } from "../csv-parser.js";
+
+// ============================================================
+// In-memory storage (MVP)
+// TODO: Replace with Prisma database integration
+// ============================================================
+
+interface StoredJob {
+  id: string;
+  status: JobStatus;
+  totalCount: number;
+  doneCount: number;
+  failedCount: number;
+  companies: Array<{
+    id: string;
+    company_name: string;
+    company_url?: string;
+    industry?: string;
+  }>;
+  createdAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+}
+
+/** In-memory job store keyed by job ID */
+const jobStore = new Map<string, StoredJob>();
+
+// ============================================================
+// Helper: create a job from a list of company inputs
+// ============================================================
+
+interface CompanyInput {
+  company_name: string;
+  company_url?: string;
+  industry?: string;
+}
+
+function createJobFromCompanies(companies: CompanyInput[]): StoredJob {
+  const jobId = randomUUID();
+  const companyRecords = companies.map((c) => ({
+    id: randomUUID(),
+    company_name: c.company_name,
+    company_url: c.company_url,
+    industry: c.industry,
+  }));
+
+  const job: StoredJob = {
+    id: jobId,
+    status: "pending",
+    totalCount: companyRecords.length,
+    doneCount: 0,
+    failedCount: 0,
+    companies: companyRecords,
+    createdAt: new Date(),
+  };
+
+  jobStore.set(jobId, job);
+
+  // TODO: Queue collection tasks via JobManager from @sales-ai/worker
+  // Example:
+  //   const jobManager = new JobManager(redisConnection);
+  //   for (const company of companyRecords) {
+  //     await jobManager.enqueue({ jobId, companyId: company.id, companyName: company.company_name });
+  //   }
+  //
+  // For now, we just mark the job as pending.
+  // The worker package will pick up these tasks once integrated.
+
+  return job;
+}
+
+function toJobStatusResponse(job: StoredJob): CollectionJobStatus {
+  return {
+    id: job.id,
+    status: job.status,
+    totalCount: job.totalCount,
+    doneCount: job.doneCount,
+    failedCount: job.failedCount,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+  };
+}
+
+// ============================================================
+// Routes
+// ============================================================
+
+const jobs = new Hono();
+
+/**
+ * POST /api/jobs - Create a new collection job from a JSON body
+ *
+ * Body: { companies: Array<{ company_name: string, company_url?: string, industry?: string }> }
+ */
+jobs.post("/api/jobs", async (c) => {
+  try {
+    const body = await c.req.json<{ companies?: CompanyInput[] }>();
+
+    if (!body.companies || !Array.isArray(body.companies) || body.companies.length === 0) {
+      const errorResp: ApiResponse<never> = {
+        success: false,
+        error: "Request body must include a non-empty 'companies' array.",
+      };
+      return c.json(errorResp, 400);
+    }
+
+    // Validate that each company has at least a name
+    for (const company of body.companies) {
+      if (!company.company_name || typeof company.company_name !== "string") {
+        const errorResp: ApiResponse<never> = {
+          success: false,
+          error: "Each company must have a non-empty 'company_name' string.",
+        };
+        return c.json(errorResp, 400);
+      }
+    }
+
+    const job = createJobFromCompanies(body.companies);
+
+    const resp: ApiResponse<{ jobId: string; totalCount: number; status: JobStatus }> = {
+      success: true,
+      data: {
+        jobId: job.id,
+        totalCount: job.totalCount,
+        status: job.status,
+      },
+    };
+
+    return c.json(resp, 201);
+  } catch (err) {
+    const errorResp: ApiResponse<never> = {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error creating job",
+    };
+    return c.json(errorResp, 500);
+  }
+});
+
+/**
+ * POST /api/jobs/csv - Create a job from a CSV file upload
+ *
+ * Accepts multipart form data with a "file" field containing the CSV.
+ */
+jobs.post("/api/jobs/csv", async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get("file");
+
+    if (!file || !(file instanceof File)) {
+      const errorResp: ApiResponse<never> = {
+        success: false,
+        error: "A 'file' field with a CSV file is required.",
+      };
+      return c.json(errorResp, 400);
+    }
+
+    // Read file into a Buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Parse CSV (handles encoding detection, validation, deduplication)
+    const parsedRows: CsvRow[] = await parseCSV(buffer);
+
+    if (parsedRows.length === 0) {
+      const errorResp: ApiResponse<never> = {
+        success: false,
+        error: "No valid company rows found in the uploaded CSV.",
+      };
+      return c.json(errorResp, 400);
+    }
+
+    // Convert CsvRow[] to CompanyInput[]
+    const companies: CompanyInput[] = parsedRows.map((row) => ({
+      company_name: row.company_name,
+      company_url: row.company_url || undefined,
+      industry: row.industry || undefined,
+    }));
+
+    const job = createJobFromCompanies(companies);
+
+    const resp: ApiResponse<{
+      jobId: string;
+      totalCount: number;
+      parsedCompanies: number;
+      status: JobStatus;
+    }> = {
+      success: true,
+      data: {
+        jobId: job.id,
+        totalCount: job.totalCount,
+        parsedCompanies: parsedRows.length,
+        status: job.status,
+      },
+    };
+
+    return c.json(resp, 201);
+  } catch (err) {
+    const errorResp: ApiResponse<never> = {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error processing CSV",
+    };
+    return c.json(errorResp, 500);
+  }
+});
+
+/**
+ * GET /api/jobs/:jobId - Get job status and progress
+ */
+jobs.get("/api/jobs/:jobId", (c) => {
+  const jobId = c.req.param("jobId");
+  const job = jobStore.get(jobId);
+
+  if (!job) {
+    const errorResp: ApiResponse<never> = {
+      success: false,
+      error: `Job not found: ${jobId}`,
+    };
+    return c.json(errorResp, 404);
+  }
+
+  // TODO: Fetch real-time progress from JobManager / BullMQ
+  // const progress = await jobManager.getJobProgress(jobId);
+
+  const resp: ApiResponse<CollectionJobStatus> = {
+    success: true,
+    data: toJobStatusResponse(job),
+  };
+
+  return c.json(resp);
+});
+
+/**
+ * GET /api/jobs - List all jobs
+ */
+jobs.get("/api/jobs", (c) => {
+  const allJobs = Array.from(jobStore.values())
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .map(toJobStatusResponse);
+
+  const resp: ApiResponse<CollectionJobStatus[]> = {
+    success: true,
+    data: allJobs,
+  };
+
+  return c.json(resp);
+});
+
+export default jobs;

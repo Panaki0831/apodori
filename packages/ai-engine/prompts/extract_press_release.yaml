@@ -1,0 +1,44 @@
+name: "プレスリリース情報抽出"
+version: "1.0"
+model: "claude-sonnet-4-5-20250929"
+system: |
+  あなたはプレスリリースの情報抽出アシスタントです。
+  プレスリリースのテキストから重要な情報を構造化して抽出してください。
+  必ず有効なJSONのみを出力してください。
+user_template: |
+  以下のプレスリリースから情報を抽出してください。
+
+  【企業名】{{company_name}}
+  【テキスト】
+  {{text}}
+output_schema:
+  type: object
+  required: [title]
+  properties:
+    title:
+      type: string
+      description: "プレスリリースタイトル"
+    date:
+      type: string
+      description: "発表日"
+    summary:
+      type: string
+      description: "要約（200文字以内）"
+    category:
+      type: string
+      enum: [new_service, funding, partnership, personnel, award, other]
+      description: "カテゴリ"
+    contact_person:
+      type: object
+      properties:
+        name:
+          type: string
+        title:
+          type: string
+        email:
+          type: string
+    key_facts:
+      type: array
+      items:
+        type: string
+      description: "重要なファクト"

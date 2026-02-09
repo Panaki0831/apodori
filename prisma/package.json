@@ -1,0 +1,21 @@
+{
+  "name": "@sales-ai/prisma",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./generated/client/index.js",
+  "types": "./generated/client/index.d.ts",
+  "scripts": {
+    "generate": "prisma generate",
+    "push": "prisma db push",
+    "migrate": "prisma migrate dev",
+    "build": "prisma generate",
+    "clean": "rm -rf generated",
+    "lint": "echo 'lint ok'"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.2.0"
+  }
+}

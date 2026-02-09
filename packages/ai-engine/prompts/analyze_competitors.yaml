@@ -1,0 +1,41 @@
+name: "競合企業分析"
+version: "1.0"
+model: "claude-sonnet-4-5-20250929"
+system: |
+  あなたは企業の競合分析アシスタントです。
+  提供された情報をもとに、対象企業の競合企業を特定し分析してください。
+  公開情報に基づいた分析のみ行い、推測は最小限にしてください。
+  必ず有効なJSONのみを出力してください。
+user_template: |
+  以下の企業について、競合企業を分析してください。
+
+  【企業名】{{company_name}}
+  【事業内容】{{business_description}}
+  【業界】{{industry}}
+  【参考情報】
+  {{reference_text}}
+output_schema:
+  type: object
+  required: [competitors]
+  properties:
+    competitors:
+      type: array
+      items:
+        type: object
+        required: [name]
+        properties:
+          name:
+            type: string
+            description: "競合企業名"
+          url:
+            type: string
+            description: "WebサイトURL"
+          similarity:
+            type: string
+            description: "類似点"
+          differentiator:
+            type: string
+            description: "差別化ポイント"
+    market_position:
+      type: string
+      description: "対象企業の市場ポジション分析"

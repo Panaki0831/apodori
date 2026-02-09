@@ -1,0 +1,48 @@
+name: "担当者情報抽出"
+version: "1.0"
+model: "claude-sonnet-4-5-20250929"
+system: |
+  あなたは営業リード情報の抽出アシスタントです。
+  以下の情報源から、企業の意思決定者・担当者の情報を抽出してください。
+  特に以下の役職を優先的に抽出してください：
+  - 代表取締役、CEO、社長
+  - CTO、技術責任者、VPoE
+  - 事業部長、部長クラス
+  - 採用担当者、人事責任者
+  情報が見つからない場合は空の配列を返してください。
+  推測や創作は一切しないでください。
+  必ず有効なJSONのみを出力してください。
+user_template: |
+  以下の情報から担当者・役員の情報を抽出してJSON形式で返してください。
+
+  【企業名】{{company_name}}
+  【テキスト】
+  {{text}}
+output_schema:
+  type: object
+  required: [contacts]
+  properties:
+    contacts:
+      type: array
+      items:
+        type: object
+        required: [name]
+        properties:
+          name:
+            type: string
+            description: "氏名"
+          name_reading:
+            type: string
+            description: "ふりがな"
+          title:
+            type: string
+            description: "役職"
+          department:
+            type: string
+            description: "部署"
+          email:
+            type: string
+            description: "メールアドレス（公開されている場合）"
+          source:
+            type: string
+            description: "情報取得元の説明"

@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "./generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id              String          @id @default(cuid())
+  name            String
+  nameNormalized  String
+  url             String?
+  industry        String?
+  employeeCount   Int?
+  capital         String?
+  corporateNumber String?
+  address         String?
+  phone           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  details         CompanyDetail?
+  contacts        Contact[]
+  tasks           CollectionTask[]
+
+  @@index([nameNormalized])
+}
+
+model CompanyDetail {
+  id                  String   @id @default(cuid())
+  companyId           String   @unique
+  businessDescription String?
+  representative      String?
+  foundedDate         String?
+  revenue             String?
+  profit              String?
+  growthRate          String?
+  challenges          String?
+  competitors         Json?
+  recentNews          Json?
+  certifications      Json?
+  contactFormUrl      String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model Contact {
+  id                String              @id @default(cuid())
+  companyId         String
+  personName        String
+  personNameReading String?
+  email             String?
+  emailConfidence   Float?
+  emailSource       String?
+  jobTitle          String?
+  department        String?
+  linkedinUrl       String?
+  sourceUrl         String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  company           Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  verifications     EmailVerification[]
+
+  @@index([companyId])
+  @@index([email])
+}
+
+model CollectionJob {
+  id          String           @id @default(cuid())
+  status      String           @default("pending")
+  totalCount  Int
+  doneCount   Int              @default(0)
+  failedCount Int              @default(0)
+  csvFileName String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+
+  tasks       CollectionTask[]
+}
+
+model CollectionTask {
+  id          String        @id @default(cuid())
+  jobId       String
+  companyId   String
+  taskType    String
+  status      String        @default("pending")
+  retryCount  Int           @default(0)
+  result      Json?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  job         CollectionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([companyId])
+  @@index([status])
+}
+
+model EmailVerification {
+  id         String   @id @default(cuid())
+  contactId  String
+  email      String
+  isValid    Boolean?
+  method     String
+  result     Json?
+  verifiedAt DateTime @default(now())
+
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+}
+
+model ScrapedPage {
+  id        String   @id @default(cuid())
+  url       String   @unique
+  html      String?
+  text      String?
+  fetchedAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([url])
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@sales-ai/worker",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist",
+    "lint": "echo 'lint ok'"
+  },
+  "dependencies": {
+    "@sales-ai/core": "workspace:*",
+    "@sales-ai/ai-engine": "workspace:*",
+    "@sales-ai/data-collector": "workspace:*",
+    "bullmq": "^5.31.0",
+    "ioredis": "^5.4.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}

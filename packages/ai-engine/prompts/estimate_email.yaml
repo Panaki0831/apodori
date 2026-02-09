@@ -1,0 +1,41 @@
+name: "メールアドレス推定"
+version: "1.0"
+model: "gpt-4o-mini"
+system: |
+  あなたはメールアドレスのパターン推定アシスタントです。
+  企業の既知のメールアドレスから命名パターンを分析し、
+  対象者のメールアドレスを推定してください。
+  分析結果を必ずJSON形式で返してください。
+user_template: |
+  以下の情報を元に、対象者のメールアドレスパターンを推定してください。
+
+  【企業ドメイン】{{domain}}
+  【既知のメールアドレス（参考）】
+  {{known_emails}}
+  【対象者】
+  名前: {{person_name}}
+  ローマ字（姓）: {{last_name_romaji}}
+  ローマ字（名）: {{first_name_romaji}}
+
+  最も可能性の高い順に最大5つのメールアドレス候補を返してください。
+output_schema:
+  type: object
+  required: [candidates]
+  properties:
+    detected_pattern:
+      type: string
+      description: "検出されたメール命名パターンの説明"
+    candidates:
+      type: array
+      items:
+        type: object
+        required: [email, confidence]
+        properties:
+          email:
+            type: string
+          confidence:
+            type: number
+            description: "推定信頼度 0.0-1.0"
+          pattern:
+            type: string
+            description: "使用したパターン名"

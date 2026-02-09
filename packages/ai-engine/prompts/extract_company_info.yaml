@@ -1,0 +1,59 @@
+name: "企業情報抽出"
+version: "1.0"
+model: "claude-sonnet-4-5-20250929"
+system: |
+  あなたは企業情報を正確に抽出するアシスタントです。
+  HTMLテキストから以下の情報をJSON形式で抽出してください。
+  情報が見つからない場合はnullを返してください。
+  推測や創作は一切しないでください。
+  必ず有効なJSONのみを出力してください。
+user_template: |
+  以下のWebページのテキストから企業情報を抽出してJSON形式で返してください。
+
+  【テキスト】
+  {{text}}
+output_schema:
+  type: object
+  required: [company_name]
+  properties:
+    company_name:
+      type: string
+      description: "正式会社名"
+    representative:
+      type: string
+      description: "代表者名"
+    address:
+      type: string
+      description: "本社所在地"
+    phone:
+      type: string
+      description: "電話番号"
+    email:
+      type: string
+      description: "公開メールアドレス"
+    business_description:
+      type: string
+      description: "事業内容の要約（200文字以内）"
+    founded_date:
+      type: string
+      description: "設立日"
+    capital:
+      type: string
+      description: "資本金"
+    employee_count:
+      type: number
+      description: "従業員数"
+    executives:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+          title:
+            type: string
+          department:
+            type: string
+    contact_form_url:
+      type: string
+      description: "問い合わせフォームURL"
