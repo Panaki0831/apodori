@@ -23,11 +23,19 @@ import {
 interface RawCompanyInfo {
   company_name?: string | null;
   representative?: string | null;
+  representative_romaji?: string | null;
   address?: string | null;
   phone?: string | null;
   email?: string | null;
   business_description?: string | null;
-  executives?: { name: string; title: string; department?: string }[];
+  industry?: string | null;
+  employee_count?: string | number | null;
+  executives?: {
+    name: string;
+    name_romaji?: string;
+    title: string;
+    department?: string;
+  }[];
   contact_form_url?: string | null;
 }
 
@@ -99,11 +107,29 @@ export async function extractCompanyInfo(
 
   const executives: ExecutiveInfo[] = (raw.executives ?? []).map((e) => ({
     name: e.name,
+    nameRomaji: e.name_romaji ?? undefined,
     title: e.title,
     department: e.department,
   }));
 
-  return {
+  // Store extra fields that the CorporateSiteResult type doesn't carry natively.
+  // The pipeline reads them via type casts.
+  const extras: Record<string, unknown> = {};
+  if (raw.representative_romaji) {
+    extras._representativeRomaji = raw.representative_romaji;
+  }
+  if (raw.industry) {
+    extras._industry = raw.industry;
+  }
+  if (raw.employee_count) {
+    const n =
+      typeof raw.employee_count === "number"
+        ? raw.employee_count
+        : parseInt(String(raw.employee_count).replace(/[^0-9]/g, ""), 10);
+    if (n && !isNaN(n)) extras._employeeCount = n;
+  }
+
+  const result: CorporateSiteResult = {
     companyName: raw.company_name ?? undefined,
     representative: raw.representative ?? undefined,
     address: raw.address ?? undefined,
@@ -113,6 +139,11 @@ export async function extractCompanyInfo(
     executives,
     contactFormUrl: raw.contact_form_url ?? undefined,
   };
+
+  // Attach extra fields so the pipeline can read them
+  Object.assign(result, extras);
+
+  return result;
 }
 
 /**

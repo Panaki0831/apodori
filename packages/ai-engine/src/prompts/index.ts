@@ -23,12 +23,15 @@ export const EXTRACT_COMPANY_INFO: PromptTemplate = {
 {
   "company_name": "企業名",
   "representative": "代表者名",
+  "representative_romaji": "代表者名のローマ字 (例: yamada taro)",
   "address": "所在地",
   "phone": "電話番号",
   "email": "メールアドレス",
   "business_description": "事業内容の要約",
+  "industry": "業種（不動産、IT、製造業、金融、etc.）",
+  "employee_count": "従業員数（数値のみ。例: 1500）",
   "executives": [
-    { "name": "役員名", "title": "役職", "department": "部署" }
+    { "name": "役員名", "name_romaji": "役員名のローマ字 (例: tanaka ichiro)", "title": "役職", "department": "部署" }
   ],
   "contact_form_url": "問い合わせフォームのURL"
 }
@@ -36,6 +39,8 @@ export const EXTRACT_COMPANY_INFO: PromptTemplate = {
 重要なルール:
 - 情報が見つからない場合はnullを返してください。決して情報を捏造しないでください。
 - executives配列は見つかった役員のみを含めてください。見つからなければ空配列を返してください。
+- name_romajiは日本語名をヘボン式ローマ字で変換してください（例: 田中太郎 → tanaka taro）。
+- representative_romajiも同様にローマ字で出力してください。
 - HTMLタグではなく、テキストコンテンツから情報を抽出してください。
 - 電話番号やメールアドレスは正規のフォーマットで返してください。
 - 必ず有効なJSONのみを出力してください。説明文は不要です。`,

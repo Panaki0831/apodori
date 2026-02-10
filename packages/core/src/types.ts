@@ -18,6 +18,7 @@ export const TASK_TYPES = [
   "case_study",
   "contact_search",
   "email_search",
+  "executive_search",
 ] as const;
 
 export type TaskType = (typeof TASK_TYPES)[number];
@@ -114,6 +115,8 @@ export type EmailSource = "hp" | "linkedin" | "api" | "pattern";
 
 export interface ExecutiveInfo {
   name: string;
+  /** Romanized name for email pattern generation (e.g. "tanaka taro") */
+  nameRomaji?: string;
   title: string;
   department?: string;
 }

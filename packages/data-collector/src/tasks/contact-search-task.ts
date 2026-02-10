@@ -79,8 +79,19 @@ export class ContactSearchTask implements CollectionTask {
         hunterIoApiKey: this.hunterIoApiKey || undefined,
       });
 
-      // Build contact inputs from executives
+      // Build contact inputs from executives.
+      // Prefer romaji names (from LLM extraction) for email pattern generation.
       const contactInputs: ContactInput[] = this.executives.map((exec) => {
+        if (exec.nameRomaji) {
+          // Romaji is available — split "tanaka taro" into last/first
+          const parts = exec.nameRomaji.trim().toLowerCase().split(/\s+/);
+          return {
+            firstName: parts.length >= 2 ? parts.slice(1).join("") : parts[0],
+            lastName: parts.length >= 2 ? parts[0] : "",
+            jobTitle: exec.title,
+          };
+        }
+        // Fallback: try parsing the Japanese name
         const [lastName, firstName] = parseJapaneseName(exec.name);
         return {
           firstName: firstName || lastName,

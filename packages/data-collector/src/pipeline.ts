@@ -24,6 +24,7 @@ import { PressReleaseTask } from "./tasks/press-release-task.js";
 import { MediaTask } from "./tasks/media-task.js";
 import { CompetitorTask } from "./tasks/competitor-task.js";
 import { ContactSearchTask } from "./tasks/contact-search-task.js";
+import { ExecutiveSearchTask } from "./tasks/executive-search-task.js";
 
 // ============================================================
 // Pipeline Result
@@ -177,12 +178,35 @@ export class CollectionPipeline {
 
     // Fallback: if no executives found but representative is known, use them
     if (executives.length === 0 && corporateSiteResult?.companyInfo?.representative) {
+      const csExtras = corporateSiteResult.companyInfo as unknown as Record<string, unknown>;
+      const repRomaji = csExtras?._representativeRomaji as string | undefined;
+
       executives = [
         {
           name: corporateSiteResult.companyInfo.representative,
+          nameRomaji: repRomaji,
           title: "代表取締役",
         },
       ];
+    }
+
+    // Phase 2.5: If still no executives, try Google Search for leadership pages
+    if (executives.length === 0) {
+      try {
+        const execSearchTask = new ExecutiveSearchTask();
+        const execResult = await execSearchTask.execute(ctx);
+        taskResults.push(execResult);
+
+        if (execResult.success && execResult.data) {
+          const found = (execResult.data as { executives?: ExecutiveInfo[] })
+            .executives;
+          if (found && found.length > 0) {
+            executives = found;
+          }
+        }
+      } catch {
+        // Executive search failed — continue without
+      }
     }
 
     // Collect emails discovered by regex from company website HTML
@@ -372,11 +396,18 @@ export class CollectionPipeline {
     corporateSite?: CorporateSiteResult,
     gbiz?: GbizInfoResult,
   ): CompanyInfo {
+    // Read extra fields extracted by the LLM (industry, employee count)
+    const csExtras = corporateSite as unknown as
+      | Record<string, unknown>
+      | undefined;
+    const llmIndustry = csExtras?._industry as string | undefined;
+    const llmEmployeeCount = csExtras?._employeeCount as number | undefined;
+
     return {
       name: corporateSite?.companyName ?? companyName,
       url: companyUrl,
-      industry,
-      employeeCount: gbiz?.employeeCount,
+      industry: industry || llmIndustry,
+      employeeCount: gbiz?.employeeCount ?? llmEmployeeCount,
       capital: gbiz?.capital,
       corporateNumber: gbiz?.corporateNumber,
       address: corporateSite?.address ?? gbiz?.location,
