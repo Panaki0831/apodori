@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { loadConfig } from "@sales-ai/core";
 import type { ApiResponse, CsvRow, JobStatus } from "@sales-ai/core";
-import { JobManager } from "@sales-ai/worker";
+import { JobManager, ResultStore } from "@sales-ai/worker";
 import { parseCSV } from "../csv-parser.js";
 
 // ============================================================
@@ -11,6 +11,7 @@ import { parseCSV } from "../csv-parser.js";
 
 const config = loadConfig();
 const jobManager = new JobManager(config.redis.url);
+const resultStore = new ResultStore(config.redis.url);
 
 // ============================================================
 // In-memory job metadata store (MVP)
@@ -115,6 +116,51 @@ async function toFrontendJob(job: StoredJob) {
     // If BullMQ query fails, use stored values
   }
 
+  // Check Redis for per-company task progress
+  const companyDetails = await Promise.all(
+    job.companies.map(async (c) => {
+      const result = await resultStore.getCompanyResult(c.id);
+      if (!result) {
+        // Not yet processed
+        return {
+          id: c.id,
+          name: c.company_name,
+          url: c.company_url,
+          tasksCompleted: 0,
+          tasksFailed: 0,
+          tasksTotal: 11,
+        };
+      }
+
+      // Use taskResults if available for precise counts
+      const taskResults = (result as Record<string, unknown>)
+        .taskResults as Array<{ success: boolean }> | undefined;
+
+      if (taskResults && Array.isArray(taskResults)) {
+        const completed = taskResults.filter((t) => t.success).length;
+        const failed = taskResults.filter((t) => !t.success).length;
+        return {
+          id: c.id,
+          name: c.company_name,
+          url: c.company_url,
+          tasksCompleted: completed,
+          tasksFailed: failed,
+          tasksTotal: taskResults.length,
+        };
+      }
+
+      // Result exists but no taskResults — mark as fully completed
+      return {
+        id: c.id,
+        name: c.company_name,
+        url: c.company_url,
+        tasksCompleted: 11,
+        tasksFailed: 0,
+        tasksTotal: 11,
+      };
+    }),
+  );
+
   return {
     id: job.id,
     status,
@@ -127,14 +173,7 @@ async function toFrontendJob(job: StoredJob) {
       job.startedAt ??
       job.createdAt
     ).toISOString(),
-    companies: job.companies.map((c) => ({
-      id: c.id,
-      name: c.company_name,
-      url: c.company_url,
-      tasksCompleted: 0,
-      tasksFailed: 0,
-      tasksTotal: 11,
-    })),
+    companies: companyDetails,
   };
 }
 
