@@ -41,9 +41,11 @@ interface RawCompanyInfo {
 
 interface RawContact {
   name: string;
+  name_romaji?: string;
   title: string;
   department?: string;
   email?: string;
+  linkedin_url?: string;
 }
 
 interface RawRecruitment {
@@ -176,10 +178,16 @@ export async function extractContacts(
 
   return raw.map((c) => ({
     personName: c.name,
+    personNameReading: c.name_romaji,
     jobTitle: c.title,
     department: c.department,
     email: c.email,
-    emailSource: c.email ? ("hp" as const) : undefined,
+    emailSource: c.email
+      ? ("hp" as const)
+      : c.linkedin_url
+        ? ("linkedin" as const)
+        : undefined,
+    linkedinUrl: c.linkedin_url,
   }));
 }
 
