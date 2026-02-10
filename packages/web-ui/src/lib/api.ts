@@ -15,13 +15,19 @@ export async function fetchApi<T>(
   const url = `${API_BASE}${path}`;
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     const res = await fetch(url, {
       headers: {
         "Content-Type": "application/json",
         ...(options?.headers as Record<string, string>),
       },
       ...options,
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!res.ok) {
       const body = await res.text();

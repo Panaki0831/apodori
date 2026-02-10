@@ -11,7 +11,17 @@ export class ResultStore {
   private readonly redis: IORedis;
 
   constructor(redisUrl: string) {
-    this.redis = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+    this.redis = new IORedis(redisUrl, {
+      maxRetriesPerRequest: null,
+      connectTimeout: 5000,
+      retryStrategy(times) {
+        if (times > 3) return null; // stop retrying
+        return Math.min(times * 500, 2000);
+      },
+    });
+    this.redis.on("error", (err) => {
+      console.error("[result-store] Redis error:", err.message);
+    });
   }
 
   /** Store a company result (called by the worker after processing) */
