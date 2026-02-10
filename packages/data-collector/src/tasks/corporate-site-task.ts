@@ -3,6 +3,56 @@ import { findCompanyPages, fetchPageSimple } from "@sales-ai/scraper";
 import { extractCompanyInfo } from "@sales-ai/ai-engine";
 import type { CollectionTask, TaskContext } from "./base-task.js";
 
+// ── Regex helpers for fallback extraction ──
+
+/** Match Japanese phone numbers (03-xxxx-xxxx, 0120-xxx-xxx, etc.) */
+const PHONE_RE = /(?:0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{2,4})/g;
+
+/** Match email addresses */
+const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+
+/** Match Japanese postal code + address */
+const ADDRESS_RE = /〒?\s*\d{3}[-ー]\d{4}\s*[^\n]{5,80}/g;
+
+/** Match common address patterns (都道府県 + 市区町村) */
+const ADDRESS_JP_RE =
+  /(?:東京都|北海道|(?:京都|大阪)府|.{2,3}県)[^\n,、。]{5,60}/g;
+
+/**
+ * Extract basic information from HTML text using regex patterns.
+ * Used as a fallback when the LLM returns minimal data.
+ */
+function extractFromHtmlFallback(text: string): {
+  phone?: string;
+  address?: string;
+  emails: string[];
+} {
+  const phones = text.match(PHONE_RE) ?? [];
+  const emails = [...new Set(text.match(EMAIL_RE) ?? [])];
+  const addresses = [
+    ...(text.match(ADDRESS_RE) ?? []),
+    ...(text.match(ADDRESS_JP_RE) ?? []),
+  ];
+
+  // Pick the first plausible phone (skip very short matches)
+  let phone: string | undefined;
+  for (const p of phones) {
+    const cleaned = p.replace(/[\s-]/g, "");
+    if (cleaned.length >= 10 && cleaned.length <= 13) {
+      phone = p.trim();
+      break;
+    }
+  }
+
+  // Pick the longest address candidate (usually the most complete)
+  let address: string | undefined;
+  if (addresses.length > 0) {
+    address = addresses.sort((a, b) => b.length - a.length)[0].trim();
+  }
+
+  return { phone, address, emails };
+}
+
 /**
  * Task #2: Crawl the corporate website.
  *
@@ -52,10 +102,31 @@ export class CorporateSiteTask implements CollectionTask {
 
       // Use the AI engine to extract structured company info from combined text
       const combinedHtml = htmlParts.join("\n\n---\n\n");
-      const companyInfo: CorporateSiteResult = await extractCompanyInfo(
-        ctx.llm,
-        combinedHtml,
-      );
+
+      let companyInfo: CorporateSiteResult;
+      try {
+        companyInfo = await extractCompanyInfo(ctx.llm, combinedHtml);
+      } catch {
+        // LLM extraction failed — use empty base (regex fallback below)
+        companyInfo = { executives: [] };
+      }
+
+      // ── Regex fallback: fill in missing fields from raw HTML ──
+      const fallback = extractFromHtmlFallback(combinedHtml);
+
+      if (!companyInfo.phone && fallback.phone) {
+        companyInfo.phone = fallback.phone;
+      }
+      if (!companyInfo.address && fallback.address) {
+        companyInfo.address = fallback.address;
+      }
+      if (!companyInfo.email && fallback.emails.length > 0) {
+        companyInfo.email = fallback.emails[0];
+      }
+
+      // Store all discovered emails for the contact search task
+      (companyInfo as unknown as Record<string, unknown>)._discoveredEmails =
+        fallback.emails;
 
       // Attach contact form URL if found by link explorer
       if (pages.contactUrl && !companyInfo.contactFormUrl) {

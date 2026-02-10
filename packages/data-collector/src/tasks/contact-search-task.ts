@@ -144,6 +144,36 @@ export class ContactSearchTask implements CollectionTask {
         }
       }
 
+      // ── Fallback: generate generic department emails ──
+      // When no specific contacts were found, provide standard
+      // departmental addresses as low-confidence leads.
+      if (contacts.filter((c) => c.email).length === 0) {
+        const genericAddresses: Array<{
+          prefix: string;
+          label: string;
+          confidence: number;
+        }> = [
+          { prefix: "info", label: "代表（info）", confidence: 0.4 },
+          { prefix: "contact", label: "問い合わせ（contact）", confidence: 0.35 },
+          { prefix: "sales", label: "営業部（sales）", confidence: 0.3 },
+          { prefix: "support", label: "サポート（support）", confidence: 0.25 },
+        ];
+
+        for (const addr of genericAddresses) {
+          const email = `${addr.prefix}@${domain}`;
+          if (!existingEmails.has(email)) {
+            contacts.push({
+              personName: addr.label,
+              email,
+              emailConfidence: addr.confidence,
+              emailSource: "pattern",
+              jobTitle: "部門代表",
+            });
+            existingEmails.add(email);
+          }
+        }
+      }
+
       return {
         taskType: this.type,
         success: true,

@@ -172,8 +172,23 @@ export class CollectionPipeline {
     }>(taskResults, "company_blog");
 
     // Collect executives from the corporate site crawl
-    const executives: ExecutiveInfo[] =
+    let executives: ExecutiveInfo[] =
       corporateSiteResult?.companyInfo?.executives ?? [];
+
+    // Fallback: if no executives found but representative is known, use them
+    if (executives.length === 0 && corporateSiteResult?.companyInfo?.representative) {
+      executives = [
+        {
+          name: corporateSiteResult.companyInfo.representative,
+          title: "代表取締役",
+        },
+      ];
+    }
+
+    // Collect emails discovered by regex from company website HTML
+    const discoveredEmails: string[] =
+      ((corporateSiteResult?.companyInfo as Record<string, unknown> | undefined)
+        ?._discoveredEmails as string[] | undefined) ?? [];
 
     // Build aggregated info string for competitor analysis
     const aggregatedInfo = this.buildAggregatedInfo({
@@ -190,7 +205,7 @@ export class CollectionPipeline {
     // ---------------------------------------------------------------
     competitorTask.setCollectedInfo(aggregatedInfo);
 
-    // Collect any contacts found so far (from corporate site, recruitment)
+    // Collect any contacts found so far (from corporate site, recruitment, HTML)
     const existingContacts: ContactInfo[] = [];
     if (recruitmentResult?.recruiterName) {
       existingContacts.push({
@@ -199,6 +214,29 @@ export class CollectionPipeline {
         emailSource: recruitmentResult.recruiterEmail ? "hp" : undefined,
         jobTitle: "採用担当",
       });
+    }
+
+    // Add emails found via regex in the corporate site HTML
+    for (const email of discoveredEmails) {
+      existingContacts.push({
+        personName: "（Webサイトより）",
+        email,
+        emailSource: "hp",
+        emailConfidence: 0.5,
+      });
+    }
+
+    // If corporate site found an email, add it as a contact too
+    if (corporateSiteResult?.companyInfo?.email) {
+      const csEmail = corporateSiteResult.companyInfo.email;
+      if (!existingContacts.some((c) => c.email === csEmail)) {
+        existingContacts.push({
+          personName: "（代表メール）",
+          email: csEmail,
+          emailSource: "hp",
+          emailConfidence: 0.7,
+        });
+      }
     }
 
     contactSearchTask.setExecutives(executives);

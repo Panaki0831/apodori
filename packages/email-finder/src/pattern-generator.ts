@@ -19,6 +19,13 @@ export function generateEmailCandidates(
     return [];
   }
 
+  // Skip pattern generation if names contain non-ASCII characters (e.g. Japanese)
+  // since the resulting email addresses would be invalid.
+  const ASCII_ONLY = /^[a-z0-9\-_.]+$/;
+  if (!ASCII_ONLY.test(f) || !ASCII_ONLY.test(l)) {
+    return [];
+  }
+
   const fInitial = f[0];
   const lInitial = l[0];
   const d = domain.toLowerCase().trim();

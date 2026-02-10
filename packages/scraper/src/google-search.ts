@@ -55,15 +55,9 @@ export async function searchGoogle(
   const config = loadConfig();
   const { apiKey, engineId } = config.googleSearch;
 
-  if (!apiKey) {
-    throw new Error(
-      "Google Search API key is not configured. Set GOOGLE_SEARCH_API_KEY environment variable.",
-    );
-  }
-  if (!engineId) {
-    throw new Error(
-      "Google Search Engine ID is not configured. Set GOOGLE_SEARCH_ENGINE_ID environment variable.",
-    );
+  if (!apiKey || !engineId) {
+    // Return empty results instead of throwing so sub-tasks can degrade gracefully
+    return [];
   }
 
   const effectiveNum = Math.min(numResults, MAX_RESULTS_PER_REQUEST);
