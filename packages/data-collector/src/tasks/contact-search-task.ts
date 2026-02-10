@@ -6,6 +6,7 @@ import type {
 import { extractDomain, parseJapaneseName } from "@sales-ai/core";
 import {
   EmailFinder,
+  WebEmailDiscovery,
   type ContactInput,
   type EmailFinderResult,
 } from "@sales-ai/email-finder";
@@ -14,9 +15,12 @@ import type { CollectionTask, TaskContext } from "./base-task.js";
 /**
  * Task #11: Contact and email search.
  *
- * Combines contacts discovered from the corporate site crawling (executives,
- * recruiter contacts) with the email-finder package to locate and verify
- * email addresses for key decision-makers.
+ * Discovers email addresses for key decision-makers using multiple strategies:
+ *  1. Google Search-based web email discovery (primary — no paid API needed)
+ *  2. Pattern-based email generation from romaji executive names
+ *  3. SMTP verification of generated candidates
+ *  4. Hunter.io API lookup (optional, if API key is provided)
+ *  5. Generic department emails as last-resort fallback
  */
 export class ContactSearchTask implements CollectionTask {
   readonly type = "contact_search" as const;
@@ -25,11 +29,6 @@ export class ContactSearchTask implements CollectionTask {
   private existingContacts: ContactInfo[];
   private hunterIoApiKey: string;
 
-  /**
-   * @param executives - Executives discovered from the corporate site task.
-   * @param existingContacts - Contacts already found from other tasks.
-   * @param hunterIoApiKey - API key for Hunter.io email lookups.
-   */
   constructor(
     executives: ExecutiveInfo[] = [],
     existingContacts: ContactInfo[] = [],
@@ -40,17 +39,10 @@ export class ContactSearchTask implements CollectionTask {
     this.hunterIoApiKey = hunterIoApiKey;
   }
 
-  /**
-   * Update executives list before execution (pipeline injects data from
-   * earlier tasks).
-   */
   setExecutives(executives: ExecutiveInfo[]): void {
     this.executives = executives;
   }
 
-  /**
-   * Update existing contacts before execution.
-   */
   setExistingContacts(contacts: ContactInfo[]): void {
     this.existingContacts = contacts;
   }
@@ -78,12 +70,19 @@ export class ContactSearchTask implements CollectionTask {
       const emailFinder = new EmailFinder({
         hunterIoApiKey: this.hunterIoApiKey || undefined,
       });
+      const webDiscovery = new WebEmailDiscovery();
 
-      // Build contact inputs from executives.
-      // Prefer romaji names (from LLM extraction) for email pattern generation.
+      // ── Step 1: Google Search-based domain email discovery ──
+      // This is the primary strategy — works for Japanese companies
+      // without any paid API.
+      const webEmails = await webDiscovery.discoverDomainEmails(
+        domain,
+        ctx.companyName,
+      );
+
+      // ── Step 2: Build contact inputs from executives ──
       const contactInputs: ContactInput[] = this.executives.map((exec) => {
         if (exec.nameRomaji) {
-          // Romaji is available — split "tanaka taro" into last/first
           const parts = exec.nameRomaji.trim().toLowerCase().split(/\s+/);
           return {
             firstName: parts.length >= 2 ? parts.slice(1).join("") : parts[0],
@@ -91,7 +90,6 @@ export class ContactSearchTask implements CollectionTask {
             jobTitle: exec.title,
           };
         }
-        // Fallback: try parsing the Japanese name
         const [lastName, firstName] = parseJapaneseName(exec.name);
         return {
           firstName: firstName || lastName,
@@ -100,49 +98,118 @@ export class ContactSearchTask implements CollectionTask {
         };
       });
 
-      // Find emails for all contacts
+      // ── Step 3: Pattern-based email + optional Hunter.io lookup ──
       let emailResults: EmailFinderResult[] = [];
       if (contactInputs.length > 0) {
         emailResults = await emailFinder.findEmails(domain, contactInputs);
       }
 
-      // Also try domain-wide email discovery
-      const domainEmails = await emailFinder.findDomainEmails(domain);
+      // ── Step 4: Google Search for specific person emails ──
+      // For executives whose pattern generation returned nothing (e.g. Japanese names)
+      const personSearchResults: Array<{
+        index: number;
+        email: string;
+        confidence: number;
+      }> = [];
 
-      // Merge executives with found emails
+      for (let i = 0; i < this.executives.length; i++) {
+        if (!emailResults[i]?.email) {
+          const exec = this.executives[i];
+          try {
+            const found = await webDiscovery.findPersonEmail(
+              domain,
+              exec.name,
+              ctx.companyName,
+            );
+            if (found) {
+              personSearchResults.push({
+                index: i,
+                email: found.email,
+                confidence: found.confidence,
+              });
+            }
+          } catch {
+            // Person search failed — continue
+          }
+        }
+      }
+
+      // ── Step 5: Merge all results ──
       const contacts: ContactInfo[] = this.executives.map((exec, index) => {
+        // Priority: pattern/Hunter result > Google person search > none
         const emailResult = emailResults[index];
+        const personSearch = personSearchResults.find(
+          (p) => p.index === index,
+        );
+
+        if (emailResult?.email) {
+          return {
+            personName: exec.name,
+            jobTitle: exec.title,
+            department: exec.department,
+            email: emailResult.email,
+            emailConfidence: emailResult.confidence,
+            emailSource: emailResult.source,
+          };
+        }
+
+        if (personSearch) {
+          return {
+            personName: exec.name,
+            jobTitle: exec.title,
+            department: exec.department,
+            email: personSearch.email,
+            emailConfidence: personSearch.confidence,
+            emailSource: "hp" as const,
+          };
+        }
+
         return {
           personName: exec.name,
           jobTitle: exec.title,
           department: exec.department,
-          email: emailResult?.email,
-          emailConfidence: emailResult?.confidence,
-          emailSource: emailResult?.source,
         };
       });
 
-      // Add contacts from domain-wide search that are not already present
       const existingEmails = new Set(
         contacts.map((c) => c.email).filter(Boolean),
       );
 
-      for (const domainEmail of domainEmails.emails) {
-        if (domainEmail.email && !existingEmails.has(domainEmail.email)) {
+      // Add emails from web domain discovery
+      for (const webEmail of webEmails) {
+        if (!existingEmails.has(webEmail.email)) {
           contacts.push({
-            personName: [domainEmail.firstName, domainEmail.lastName]
-              .filter(Boolean)
-              .join(" "),
-            email: domainEmail.email,
-            emailConfidence: domainEmail.confidence / 100,
-            emailSource: "api",
-            jobTitle: domainEmail.position ?? undefined,
+            personName: webEmail.context ?? "（Web検索より）",
+            email: webEmail.email,
+            emailConfidence: webEmail.confidence,
+            emailSource: "hp",
           });
-          existingEmails.add(domainEmail.email);
+          existingEmails.add(webEmail.email);
         }
       }
 
-      // Merge with existing contacts from other tasks (avoid duplicates)
+      // Also try Hunter.io domain-wide search (if API key is available)
+      try {
+        const domainEmails = await emailFinder.findDomainEmails(domain);
+        for (const domainEmail of domainEmails.emails) {
+          if (domainEmail.email && !existingEmails.has(domainEmail.email)) {
+            contacts.push({
+              personName: [domainEmail.firstName, domainEmail.lastName]
+                .filter(Boolean)
+                .join(" "),
+              email: domainEmail.email,
+              emailConfidence: domainEmail.confidence / 100,
+              emailSource: "api",
+              jobTitle: domainEmail.position ?? undefined,
+            });
+            existingEmails.add(domainEmail.email);
+          }
+        }
+      } catch {
+        // Hunter.io domain search failed — not critical
+      }
+
+      // Merge with existing contacts from other tasks
       for (const existing of this.existingContacts) {
         if (existing.email && !existingEmails.has(existing.email)) {
           contacts.push(existing);
@@ -156,8 +223,6 @@ export class ContactSearchTask implements CollectionTask {
       }
 
       // ── Fallback: generate generic department emails ──
-      // When no specific contacts were found, provide standard
-      // departmental addresses as low-confidence leads.
       if (contacts.filter((c) => c.email).length === 0) {
         const genericAddresses: Array<{
           prefix: string;

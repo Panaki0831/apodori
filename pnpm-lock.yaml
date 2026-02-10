@@ -123,6 +123,9 @@ importers:
       '@sales-ai/core':
         specifier: workspace:*
         version: link:../core
+      '@sales-ai/scraper':
+        specifier: workspace:*
+        version: link:../scraper
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

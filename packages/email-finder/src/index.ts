@@ -13,3 +13,5 @@ export type {
   EmailFinderResult,
   DomainEmailResult,
 } from "./email-finder.js";
+export { WebEmailDiscovery } from "./web-email-discovery.js";
+export type { WebDiscoveredEmail } from "./web-email-discovery.js";

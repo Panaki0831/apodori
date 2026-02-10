@@ -11,7 +11,8 @@
     "lint": "echo 'lint ok'"
   },
   "dependencies": {
-    "@sales-ai/core": "workspace:*"
+    "@sales-ai/core": "workspace:*",
+    "@sales-ai/scraper": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
