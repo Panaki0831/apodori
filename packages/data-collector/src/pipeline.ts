@@ -84,6 +84,9 @@ export class CollectionPipeline {
     // ---------------------------------------------------------------
     // Phase 1: Google search to resolve the company URL
     // ---------------------------------------------------------------
+    console.log(
+      `[pipeline] Phase 1: Google search | company="${companyName}" | existingUrl=${companyUrl ?? "NONE"}`,
+    );
     const googleTask = new GoogleSearchTask();
     const googleResult = await googleTask.execute(ctx);
     taskResults.push(googleResult);
@@ -97,6 +100,13 @@ export class CollectionPipeline {
       if (!ctx.companyUrl && googleData.officialUrl) {
         ctx.companyUrl = googleData.officialUrl;
       }
+      console.log(
+        `[pipeline] Phase 1 done | officialUrl=${googleData.officialUrl ?? "NOT FOUND"} | results=${googleData.searchResults?.length ?? 0}`,
+      );
+    } else {
+      console.warn(
+        `[pipeline] Phase 1 failed: ${googleResult.error ?? "unknown error"}`,
+      );
     }
 
     // ---------------------------------------------------------------
@@ -172,9 +182,17 @@ export class CollectionPipeline {
       mediaCoverage?: NewsItem[];
     }>(taskResults, "company_blog");
 
+    // Log Phase 2 results
+    console.log(
+      `[pipeline] Phase 2 done | corporateSite=${!!corporateSiteResult} | gbiz=${!!gbizResult} | recruitment=${!!recruitmentResult}`,
+    );
+
     // Collect executives from the corporate site crawl
     let executives: ExecutiveInfo[] =
       corporateSiteResult?.companyInfo?.executives ?? [];
+    console.log(
+      `[pipeline] Phase 3: executives from corporate site: ${executives.length} | representative=${corporateSiteResult?.companyInfo?.representative ?? "NONE"}`,
+    );
 
     // Fallback: if no executives found but representative is known, use them
     if (executives.length === 0 && corporateSiteResult?.companyInfo?.representative) {
@@ -209,10 +227,20 @@ export class CollectionPipeline {
       }
     }
 
+    console.log(
+      `[pipeline] Final executives count: ${executives.length}`,
+      executives.map((e) => `${e.name} (${e.title})`).join(", "),
+    );
+
     // Collect emails discovered by regex from company website HTML
     const discoveredEmails: string[] =
       ((corporateSiteResult?.companyInfo as Record<string, unknown> | undefined)
         ?._discoveredEmails as string[] | undefined) ?? [];
+
+    console.log(
+      `[pipeline] Discovered emails from HTML: ${discoveredEmails.length}`,
+      discoveredEmails.length > 0 ? discoveredEmails.join(", ") : "",
+    );
 
     // Build aggregated info string for competitor analysis
     const aggregatedInfo = this.buildAggregatedInfo({
@@ -266,6 +294,10 @@ export class CollectionPipeline {
     contactSearchTask.setExecutives(executives);
     contactSearchTask.setExistingContacts(existingContacts);
 
+    console.log(
+      `[pipeline] Phase 4: Running contact search | companyUrl=${ctx.companyUrl ?? "NONE"} | executives=${executives.length} | existingContacts=${existingContacts.length}`,
+    );
+
     const [competitorResult, contactResult] = await Promise.allSettled([
       competitorTask.execute(ctx),
       contactSearchTask.execute(ctx),
@@ -273,9 +305,27 @@ export class CollectionPipeline {
 
     if (competitorResult.status === "fulfilled") {
       taskResults.push(competitorResult.value);
+    } else {
+      console.warn(
+        `[pipeline] Competitor task rejected:`,
+        competitorResult.reason,
+      );
     }
     if (contactResult.status === "fulfilled") {
       taskResults.push(contactResult.value);
+      console.log(
+        `[pipeline] Contact search completed | success=${contactResult.value.success} | hasData=${!!contactResult.value.data}`,
+      );
+      if (!contactResult.value.success) {
+        console.warn(
+          `[pipeline] Contact search failed: ${contactResult.value.error}`,
+        );
+      }
+    } else {
+      console.warn(
+        `[pipeline] Contact task rejected:`,
+        contactResult.reason,
+      );
     }
 
     // ---------------------------------------------------------------
@@ -289,7 +339,29 @@ export class CollectionPipeline {
       gbizResult,
     );
 
-    const contacts = this.extractContacts(taskResults);
+    let contacts = this.extractContacts(taskResults);
+
+    // Fallback: if ContactSearchTask returned nothing usable,
+    // use the contacts we already gathered (corporate site emails,
+    // recruitment contacts, executives without email, etc.)
+    if (contacts.length === 0 && existingContacts.length > 0) {
+      console.log(
+        `[pipeline] Using ${existingContacts.length} existingContacts as fallback`,
+      );
+      contacts = existingContacts;
+    }
+
+    // Fallback: if still nothing, create contact entries from executives
+    if (contacts.length === 0 && executives.length > 0) {
+      console.log(
+        `[pipeline] Creating contact entries from ${executives.length} executives`,
+      );
+      contacts = executives.map((exec) => ({
+        personName: exec.name,
+        jobTitle: exec.title,
+        department: exec.department,
+      }));
+    }
 
     const details = this.buildCompanyDetails(
       irResult,
@@ -299,6 +371,16 @@ export class CollectionPipeline {
         ? competitorResult.value
         : undefined,
     );
+
+    console.log(
+      `[pipeline] ✓ Pipeline complete for "${companyName}" | contacts=${contacts.length} | tasks=${taskResults.length} | url=${companyInfo.url ?? "NONE"}`,
+    );
+    if (contacts.length > 0) {
+      console.log(
+        `[pipeline] Contacts:`,
+        contacts.map((c) => `${c.personName} <${c.email ?? "no email"}>`).join(", "),
+      );
+    }
 
     return {
       companyInfo,

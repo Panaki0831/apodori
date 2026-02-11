@@ -49,23 +49,36 @@ export class ContactSearchTask implements CollectionTask {
 
   async execute(ctx: TaskContext): Promise<TaskResult> {
     try {
-      if (!ctx.companyUrl) {
+      const domain = ctx.companyUrl ? extractDomain(ctx.companyUrl) : null;
+
+      if (!domain) {
+        // No URL or domain available — return executives as contacts without email
+        console.warn(
+          `[contact-search] No domain available (companyUrl=${ctx.companyUrl ?? "NONE"}). Returning executives as contacts without email.`,
+        );
+        const contacts: ContactInfo[] = this.executives.map((exec) => ({
+          personName: exec.name,
+          jobTitle: exec.title,
+          department: exec.department,
+        }));
+
+        // Add existing contacts from other sources
+        for (const existing of this.existingContacts) {
+          if (!contacts.some((c) => c.personName === existing.personName)) {
+            contacts.push(existing);
+          }
+        }
+
         return {
           taskType: this.type,
-          success: false,
-          error:
-            "No company URL available. Cannot search for contact emails without a domain.",
+          success: true,
+          data: contacts.length > 0 ? contacts : [],
         };
       }
 
-      const domain = extractDomain(ctx.companyUrl);
-      if (!domain) {
-        return {
-          taskType: this.type,
-          success: false,
-          error: `Could not extract domain from URL: ${ctx.companyUrl}`,
-        };
-      }
+      console.log(
+        `[contact-search] Starting for "${ctx.companyName}" | domain=${domain} | executives=${this.executives.length} | existingContacts=${this.existingContacts.length}`,
+      );
 
       const emailFinder = new EmailFinder({
         hunterIoApiKey: this.hunterIoApiKey || undefined,
@@ -75,10 +88,12 @@ export class ContactSearchTask implements CollectionTask {
       // ── Step 1: Google Search-based domain email discovery ──
       // This is the primary strategy — works for Japanese companies
       // without any paid API.
+      console.log(`[contact-search] Step 1: Web email discovery for @${domain}`);
       const webEmails = await webDiscovery.discoverDomainEmails(
         domain,
         ctx.companyName,
       );
+      console.log(`[contact-search] Step 1 result: ${webEmails.length} emails found`, webEmails.map(e => e.email).join(", "));
 
       // ── Step 2: Build contact inputs from executives ──
       const contactInputs: ContactInput[] = this.executives.map((exec) => {
@@ -99,9 +114,11 @@ export class ContactSearchTask implements CollectionTask {
       });
 
       // ── Step 3: Pattern-based email + optional Hunter.io lookup ──
+      console.log(`[contact-search] Step 2-3: Pattern generation for ${contactInputs.length} contacts`, contactInputs.map(c => `${c.firstName} ${c.lastName}`).join(", "));
       let emailResults: EmailFinderResult[] = [];
       if (contactInputs.length > 0) {
         emailResults = await emailFinder.findEmails(domain, contactInputs);
+        console.log(`[contact-search] Step 3 result: ${emailResults.filter(r => r.email).length}/${emailResults.length} emails found`);
       }
 
       // ── Step 4: Google Search for specific person emails ──
@@ -250,12 +267,17 @@ export class ContactSearchTask implements CollectionTask {
         }
       }
 
+      console.log(
+        `[contact-search] ✓ Done | total=${contacts.length} | withEmail=${contacts.filter(c => c.email).length} | withoutEmail=${contacts.filter(c => !c.email).length}`,
+      );
+
       return {
         taskType: this.type,
         success: true,
         data: contacts,
       };
     } catch (error) {
+      console.error(`[contact-search] Fatal error:`, error);
       return {
         taskType: this.type,
         success: false,

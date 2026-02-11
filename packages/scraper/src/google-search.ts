@@ -57,6 +57,9 @@ export async function searchGoogle(
 
   if (!apiKey || !engineId) {
     // Return empty results instead of throwing so sub-tasks can degrade gracefully
+    console.warn(
+      `[google-search] Missing config: apiKey=${apiKey ? "SET" : "MISSING"} engineId=${engineId ? "SET" : "MISSING"} — returning empty results`,
+    );
     return [];
   }
 
